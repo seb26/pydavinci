@@ -1,18 +1,24 @@
 # type: ignore
 # flake8: noqa
-import imp
+# import imp
+import logging
 import os
 import platform
 import subprocess
 import sys
 import time
 from collections.abc import MutableMapping
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, Generator, List, Optional
 
 import psutil
 
 from pydavinci.connect import load_fusionscript
 from pydavinci.utils import default_resolve_install
+
+if TYPE_CHECKING:
+    from pydavinci.wrappers._resolve_stubs import PyRemoteProjectManager
+
+logger = logging.getLogger(__name__)
 
 
 class BaseResolveWrapper(object):

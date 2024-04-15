@@ -1,14 +1,15 @@
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Union
+import logging
 
 import pydantic.main
 from pydantic import BaseModel, validator
 
-import pydavinci.logger as log
 from pydavinci.wrappers.settings.map import SETTINGS_MAP, super_scale_transform
 
 if TYPE_CHECKING:
     from pydantic.fields import ModelField
 
+logger = logging.getLogger(__name__)
 
 # monkey patch to get underscore fields
 def is_valid_field(name: str) -> Optional[bool]:
@@ -65,12 +66,12 @@ def resolve_transform(
         return super_scale_transform(value)  # type: ignore
 
     if not values.get("_selfvalidate"):
-        log.debug(f"Not sending to Resolve yet. Parsing {field.alias}")
+        logger.debug(f"Not sending to Resolve yet. Parsing {field.alias}")
 
         return value
 
     if values["_selfvalidate"]:
-        log.debug(f"Setting '{field.alias}' to {value}")
+        logger.debug(f"Setting '{field.alias}' to {value}")
 
         call: Callable[[_ANY], _ANY] = SETTINGS_MAP[field.alias]  # type: ignore
         values["_obj"].SetSetting(field.alias, call(value))  # type: ignore

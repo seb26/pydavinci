@@ -1,7 +1,9 @@
 from typing import TYPE_CHECKING, Dict, List
+from pathlib import Path, PurePath
 
 # from pydavinci.wrappers._basewrappers import BaseResolveWrapper
 from pydavinci.main import resolve_obj
+from pydavinci.wrappers._basewrappers import DavinciDatabase
 from pydavinci.wrappers.project import Project
 
 if TYPE_CHECKING:
@@ -19,6 +21,7 @@ class ProjectManager(object):
     def __init__(self) -> None:
 
         self._obj: PyRemoteProjectManager = resolve_obj.GetProjectManager()
+        self._db = None
 
     def create_project(self, project_name: str) -> Project:
         """
@@ -152,6 +155,35 @@ class ProjectManager(object):
             bool: ``True`` if successful, ``False`` otherwise
         """
         return self._obj.OpenFolder(folder_name)
+    
+    def get_folder_path(self) -> str:
+        """
+        Determines the folder path of current project
+
+        Returns:
+            str: folder path separated by /
+        """
+        def _recurse(folder: str, tree: list):
+            self._obj.OpenFolder(folder)
+            tree.insert(0, folder)
+            climb = self._obj.GotoParentFolder()
+            if climb:
+                parent = self._obj.GetCurrentFolder()
+                if parent:
+                    return _recurse(
+                        parent,
+                        tree,
+                    )
+        
+        tree = []
+        current = self._obj.GetCurrentFolder()
+        print(f'Current folder at first run: {current}')
+        _recurse(current, tree)
+        # Reset the current project back to its value before we started
+        print('current folder', current)
+        self._obj.OpenFolder(current)
+        return tree
+
 
     def import_project(self, path: str) -> bool:
         """
@@ -192,42 +224,24 @@ class ProjectManager(object):
         return self._obj.RestoreProject(path)
 
     @property
-    def db(self) -> Dict[str, str]:
-        """
-        Gets or sets current database.
-        For setting a Disk DB:
-             ```python
-             ProjectManager.db = {
-             'DbType': 'Disk',
-             'DbName': 'Local Database'
-             }
-             ```
-        For setting a PostgresSQL db:
-             ```python
-             ProjectManager.db = {
-             'DbType': 'PostgreSQL',
-             'DbName': 'PostgresDB',
-             'IpAddress': '127.0.0.1'
-             }
-             ```
-
-        Args:
-             db_info (dict): valid ``db_info`` dict.
-
-
-        Returns:
-             bool: ``True`` if successful, ``False`` otherwise
-
-        """
-        return self._obj.GetCurrentDatabase()
+    def db(self) -> DavinciDatabase:
+        if self._db is None:
+            db_from_api = self._obj.GetCurrentDatabase()
+            self._db = DavinciDatabase(
+                ip_address = db_from_api.get('IpAddress'),
+                name = db_from_api.get('DbName'),
+                type = db_from_api.get('DbType'),
+            )
+            print(235)
+        return self._db
 
     @db.setter
-    def db(self, db_info: Dict[str, str]) -> bool:
+    def db(self, db: Dict[str, str] | DavinciDatabase) -> bool:
         """
         Sets current database according to ``db_info``
 
          Args:
-             db_info (dict): valid ``db_info`` dict.
+             db (DavinciDatabase, dict): DavinciDatabase object or dict with ``db_info``
 
          Info:
              Valid dictionary:
@@ -250,7 +264,22 @@ class ProjectManager(object):
              bool: ``True`` if successful, ``False`` otherwise
 
         """
-        return self._obj.SetCurrentDatabase(db_info)
+        if isinstance(db, DavinciDatabase):
+            db_info = db.db_info
+        elif isinstance(db, dict):
+            db_info = db
+        result = self._obj.SetCurrentDatabase(db_info)
+        if result is True:
+            db_from_api = self._obj.GetCurrentDatabase()
+            # Set a new DavinciDatabase, which will re-init and update paths as well
+            self._db = DavinciDatabase(
+                ip_address = db_from_api.get('IpAddress'),
+                name = db_from_api.get('DbName'),
+                type = db_from_api.get('DbType'),
+            )
+            return True
+        else:
+            return False
 
     @property
     def db_list(self) -> List[Dict[str, str]]:
