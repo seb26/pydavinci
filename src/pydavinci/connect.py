@@ -1,7 +1,26 @@
 def load_fusionscript():  # type: ignore
-    import imp
+    # import imp
     import os
     import sys
+
+    def load_dynamic(module_name, file_path):
+        if sys.version_info[0] >= 3 and sys.version_info[1] >= 5:
+            import importlib.machinery
+            import importlib.util
+
+            module = None
+            spec = None
+            loader = importlib.machinery.ExtensionFileLoader(module_name, file_path)
+            if loader:
+                spec = importlib.util.spec_from_loader(module_name, loader)
+            if spec:
+                module = importlib.util.module_from_spec(spec)
+            if module:
+                loader.exec_module(module)
+            return module
+        else:
+            import imp # type: ignore
+            return imp.load_dynamic(module_name, file_path)
 
     WIN_ENV_VARIABLES = {
         "RESOLVE_SCRIPT_API": r"%PROGRAMDATA%\Blackmagic Design\DaVinciResolve\Support\Developer\Scripting",
@@ -43,7 +62,7 @@ def load_fusionscript():  # type: ignore
         lib_path = os.getenv("RESOLVE_SCRIPT_LIB")
         if lib_path:
             try:
-                script_module = imp.load_dynamic("fusionscript", lib_path)
+                script_module = load_dynamic("fusionscript", lib_path)
             except ImportError:
                 pass
         if not script_module:
@@ -60,7 +79,7 @@ def load_fusionscript():  # type: ignore
                 path = "/opt/resolve/libs/Fusion/"
 
             try:
-                script_module = imp.load_dynamic(
+                script_module = load_dynamic(
                     "fusionscript", f"{path}fusionscript{ext}"
                 )  # noqa: E501, B950 # type: ignore
             except ImportError:
