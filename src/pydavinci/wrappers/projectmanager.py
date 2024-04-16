@@ -1,9 +1,10 @@
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Dict, Generator, List
 from pathlib import Path, PurePath
 
 # from pydavinci.wrappers._basewrappers import BaseResolveWrapper
+from pydavinci.database import DavinciDatabase
+from pydavinci.exceptions import PydavinciException
 from pydavinci.main import resolve_obj
-from pydavinci.wrappers._basewrappers import DavinciDatabase
 from pydavinci.wrappers.project import Project
 
 if TYPE_CHECKING:
@@ -21,7 +22,7 @@ class ProjectManager(object):
     def __init__(self) -> None:
 
         self._obj: PyRemoteProjectManager = resolve_obj.GetProjectManager()
-        self._db = None
+        self._local_database_disk_paths = {}
 
     def create_project(self, project_name: str) -> Project:
         """
@@ -225,15 +226,8 @@ class ProjectManager(object):
 
     @property
     def db(self) -> DavinciDatabase:
-        if self._db is None:
-            db_from_api = self._obj.GetCurrentDatabase()
-            self._db = DavinciDatabase(
-                ip_address = db_from_api.get('IpAddress'),
-                name = db_from_api.get('DbName'),
-                type = db_from_api.get('DbType'),
-            )
-            print(235)
-        return self._db
+        db_from_api = self._obj.GetCurrentDatabase()
+        return DavinciDatabase.get(**db_from_api)
 
     @db.setter
     def db(self, db: Dict[str, str] | DavinciDatabase) -> bool:
@@ -265,22 +259,13 @@ class ProjectManager(object):
 
         """
         if isinstance(db, DavinciDatabase):
-            db_info = db.db_info
+            db_info = db.info
         elif isinstance(db, dict):
             db_info = db
-        result = self._obj.SetCurrentDatabase(db_info)
-        if result is True:
-            db_from_api = self._obj.GetCurrentDatabase()
-            # Set a new DavinciDatabase, which will re-init and update paths as well
-            self._db = DavinciDatabase(
-                ip_address = db_from_api.get('IpAddress'),
-                name = db_from_api.get('DbName'),
-                type = db_from_api.get('DbType'),
-            )
-            return True
         else:
-            return False
-
+            raise PydavinciException(f'Unrecognised info, cannot set the database with this - type({db})')
+        return self._obj.SetCurrentDatabase(db_info)
+    
     @property
     def db_list(self) -> List[Dict[str, str]]:
         """
@@ -290,3 +275,35 @@ class ProjectManager(object):
             list of databases
         """
         return self._obj.GetDatabaseList()
+    
+    @property
+    def databases(self) -> List[DavinciDatabase]:
+        """
+        Returns list of database objects using pydavinci classing, e.g. DavinciLocalDatabase
+        """
+        def _create_database_objects():
+            for db_api_result in self._obj.GetDatabaseList():
+                yield DavinciDatabase.get(
+                    **db_api_result,
+                )
+        return list(
+            _create_database_objects()
+        )
+
+    def register_local_database_disk_path(self, name: str, path: str | Path) -> bool:
+        """
+        Register a disk path to a database name
+        Lasts for the life of your ProjectManager object
+
+        Returns:
+            bool: ``True`` if registered successfully, ``False`` if otherwise
+        """
+        if isinstance(path, str):
+            path = Path(path)
+        if path.is_dir():
+            self._local_database_disk_paths.update(
+                **{ name: path }
+            )
+            return True
+        else:
+            return False
