@@ -1,16 +1,40 @@
-from typing import TYPE_CHECKING
+from __future__ import annotations
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from pydavinci.connect import load_fusionscript
+from pydavinci.connect import get_resolve
 
 if TYPE_CHECKING:
     from pydavinci.wrappers._resolve_stubs import PyRemoteResolve
 
+class ResolveInstanceContext(object):
+    pass
 
-def get_resolve() -> "PyRemoteResolve":
-    load_fusionscript()  # type: ignore
-    import fusionscript as dvr_script  # type: ignore
+class ResolveInstance:
+    def __add__(self, other: PyRemoteResolve) -> PyRemoteResolve:
+        """
+        Assign PyRemoteResolve type.
+        """
+        pass
 
-    return dvr_script.scriptapp("Resolve")  # type: ignore
+    def __init__(self):
+        ResolveInstance._resolve = get_resolve()
+        ResolveInstance._context = ResolveInstanceContext()
+
+    def __getattr__(self, name) -> Any:
+        return getattr(ResolveInstance._resolve, name)
+    
+    def __setattr__(self, name) -> Any:
+        return setattr(ResolveInstance._resolve, name)
+    
+    @property
+    def context(self):
+        """
+        Permit data to be stored within this Resolve instance
+        """
+        return self._context
 
 
-resolve_obj: "PyRemoteResolve" = get_resolve()
+resolve_obj: PyRemoteResolve = ResolveInstance()
+
+pydavinci_context: ResolveInstanceContext = resolve_obj.context
