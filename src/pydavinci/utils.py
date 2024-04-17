@@ -21,10 +21,7 @@ default_resolve_install = {
 
 
 def is_resolve_obj(obj: Any) -> bool:
-    if type(obj) == type(pydavinci.main.resolve_obj):  # noqa: E721
-        return True
-    else:
-        return False
+    return isinstance(obj, pydavinci.main.resolve_obj)
 
 
 # def get_proc_pid(name: str) -> Union[None, int]:
