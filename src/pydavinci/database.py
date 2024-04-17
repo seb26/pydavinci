@@ -1,5 +1,5 @@
 # type: ignore
-from enum import auto, IntEnum
+from collections import UserDict
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator
 import logging
@@ -10,7 +10,7 @@ import sys
 import xmltodict
 
 from pydavinci.exceptions import *
-from pydavinci.main import resolve_obj
+from pydavinci.main import resolve_obj, pydavinci_context
 from pydavinci.wrappers.project import Project
 
 if TYPE_CHECKING:
@@ -18,7 +18,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+class PydavinciDiskPathsMap(UserDict):
+    def add(self, name: str, disk_path: str | Path) -> None:
+        """
+        Store disk paths for local disk databases
 
+        @param name:        Database name
+        @param disk_path:   Full disk path
+        """
+        return self.data.update(
+            dict(
+                name = name,
+                disk_path = disk_path,
+            ),
+        )
+    
+    def get(self, name: str) -> str | Path:
+        return self.data.get(name)
+    
+    def remove(self, name: str) -> None:
+        return self.data.__delitem__(name)
 
 class DavinciDatabase(object):
     name: str = None
@@ -37,7 +56,7 @@ class DavinciDatabase(object):
         self.type = type(self).__name__
     
     @classmethod
-    def get(
+    def make(
         self,
         DbName: str,
         DbType: str,
@@ -45,10 +64,14 @@ class DavinciDatabase(object):
         **kwargs,
     ):
         if DbType == 'Disk':
-            db_instance = DavinciLocalDatabase
+            db_instance = DavinciLocalDiskDatabase
         elif DbType == 'PostgreSQL':
             # Blackmagic Cloud databases are still marked as 'PostgreSQL' by the API
-            # At the moment, only way I can see to test for them is the IP address string
+            # At the moment, only way I can see to test for Cloud is to examine the IP address string
+            # 
+            # IP address example:
+            #   postgres-jkxc912f.czqkhtruf1hi.ap-southeast-2.rds.amazonaws.com
+            # 
             CLOUD_DATABASE_IP_ADDRESS_PATTERN = re.compile(
                 r"^postgres-[a-zA-Z0-9]{8}.*(amazonaws)"
             )
@@ -62,22 +85,22 @@ class DavinciDatabase(object):
             **kwargs,
         )
     
-class DavinciLocalDatabase(DavinciDatabase):
+class DavinciLocalDiskDatabase(DavinciDatabase):
     type_api = 'Disk'
 
     def __init__(self, **kwargs):
-        super(DavinciLocalDatabase, self).__init__(**kwargs)
+        super(DavinciLocalDiskDatabase, self).__init__(**kwargs)
         if kwargs.get('disk_path'):
-            self.disk_path = kwargs.pop('disk_path')
+            self._set_disk_path( kwargs.pop('disk_path') )
         else:
-            # Runs disk_path.setter() to look for the OS default db disk path if relevant
-            self.disk_path = None
+            # Look for the OS default db disk path
+            self._set_disk_path()
 
     def __repr__(self):
         if self.disk_path:
-                return f'{self.name} ({self.type}) @ {self.disk_path}'
-            else:
-                return f'{self.name} ({self.type})'
+            return f'{self.name} ({self.type}) @ {self.disk_path}'
+        else:
+            return f'{self.name} ({self.type})'
 
     def _parse_batch_render_xml(self, xml_filepath: str) -> dict:
         try:
@@ -92,20 +115,16 @@ class DavinciLocalDatabase(DavinciDatabase):
             logger.debug(e, exc_info=1)
         return xml_data
     
-    @property
-    def disk_path(self):
-        return self._disk_path
-    
-    @disk_path.setter
-    def disk_path(self, path: str) -> bool:
+    def _set_disk_path(self, path: str | Path | None = None) -> bool:
         # Set according to user specified path
         if path:
             p = Path(path)
             if p.is_dir():
                 self._disk_path = p
-        if self._disk_path is None:
-            # Look for a db path registered to the project manager
-            # TODO
+        # Look for saved db disk paths
+        if self.name in pydavinci_context.db_disk_paths_map:
+            self._disk_path = pydavinci_context.db_disk_paths_map.get(self.name)['disk_path']
+        else:
             # Look for a db in the Resolve default location, per platform
             if self.name == 'Local Database':
                 if sys.platform.startswith("win32"):
@@ -119,18 +138,31 @@ class DavinciLocalDatabase(DavinciDatabase):
                     if p.is_dir():
                         self._disk_path = p
                     else:
-                        logger.error(f'No local disk database found at this path: {p}. Calls to interact with the database will fail. You may specify the path manually when calling projectmanager with `disk_path=`.')
+                        logger.error(f'{self.name}: No local disk database found at this path: {p}. Calls to interact with the database will fail. You may specify the path manually when calling projectmanager with `disk_path=`.')
                         return False
-            else:
-                logger.error(f'No path to this disk database was provided. Calls to interact with the database will fail. You must specify the path manually when calling projectmanager with `disk_path=`.')
-                return False
 
-        if isinstance(self._disk_path, Path):
+        if self._disk_path:
             # Create a path to Projects
             self.disk_path_projects = self.disk_path.joinpath(
                 'Resolve Projects', 'Users', 'guest', 'Projects',
             )
+            # Save it to disk paths for this context
+            pydavinci_context.db_disk_paths_map.add(
+                name = self.name,
+                disk_path = self._disk_path,
+            )
             return True
+        else:
+            logger.error(f'{self.name}: No path to this disk database was identified. Calls to interact with the database will fail. You must specify the path manually by setting `resolve.project_manager.db.disk_path` to a string path or Path().')
+            return False
+        
+    @property
+    def disk_path(self):
+        return self._disk_path
+    
+    @disk_path.setter
+    def disk_path(self, path: str) -> bool:
+        return self._set_disk_path(path)
     
     def get_all_render_jobs(self, file_paths: bool = False) -> Generator:
         if not self.disk_path_projects:

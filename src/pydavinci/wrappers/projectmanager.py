@@ -1,16 +1,13 @@
-from typing import TYPE_CHECKING, Dict, Generator, List
-from pathlib import Path, PurePath
+from typing import TYPE_CHECKING, Dict, List
+from pathlib import Path
 
-# from pydavinci.wrappers._basewrappers import BaseResolveWrapper
-from pydavinci.database import DavinciDatabase
+from pydavinci.database import DavinciDatabase, PydavinciDiskPathsMap
 from pydavinci.exceptions import PydavinciException
 from pydavinci.main import resolve_obj
 from pydavinci.wrappers.project import Project
 
 if TYPE_CHECKING:
     from pydavinci.wrappers._resolve_stubs import PyRemoteProjectManager
-
-# import fusionscript as dvr_script
 
 
 class ProjectManager(object):
@@ -22,7 +19,9 @@ class ProjectManager(object):
     def __init__(self) -> None:
 
         self._obj: PyRemoteProjectManager = resolve_obj.GetProjectManager()
-        self._local_database_disk_paths = {}
+        
+        # Create map for database disk paths to be stored
+        resolve_obj.context.db_disk_paths_map = PydavinciDiskPathsMap()
 
     def create_project(self, project_name: str) -> Project:
         """
@@ -227,7 +226,7 @@ class ProjectManager(object):
     @property
     def db(self) -> DavinciDatabase:
         db_from_api = self._obj.GetCurrentDatabase()
-        return DavinciDatabase.get(**db_from_api)
+        return DavinciDatabase.make(**db_from_api)
 
     @db.setter
     def db(self, db: Dict[str, str] | DavinciDatabase) -> bool:
@@ -283,27 +282,9 @@ class ProjectManager(object):
         """
         def _create_database_objects():
             for db_api_result in self._obj.GetDatabaseList():
-                yield DavinciDatabase.get(
+                yield DavinciDatabase.make(
                     **db_api_result,
                 )
         return list(
             _create_database_objects()
         )
-
-    def register_local_database_disk_path(self, name: str, path: str | Path) -> bool:
-        """
-        Register a disk path to a database name
-        Lasts for the life of your ProjectManager object
-
-        Returns:
-            bool: ``True`` if registered successfully, ``False`` if otherwise
-        """
-        if isinstance(path, str):
-            path = Path(path)
-        if path.is_dir():
-            self._local_database_disk_paths.update(
-                **{ name: path }
-            )
-            return True
-        else:
-            return False
