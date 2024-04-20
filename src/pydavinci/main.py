@@ -1,5 +1,4 @@
 from __future__ import annotations
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydavinci.connect import get_resolve
@@ -18,21 +17,14 @@ class ResolveInstance:
         pass
 
     def __init__(self):
-        ResolveInstance._resolve = get_resolve()
-        ResolveInstance._context = ResolveInstanceContext()
+        ResolveInstance.resolve = get_resolve()
+        ResolveInstance.context = ResolveInstanceContext()
 
     def __getattr__(self, name) -> Any:
-        return getattr(ResolveInstance._resolve, name)
+        return getattr(ResolveInstance.resolve, name)
     
     def __setattr__(self, name) -> Any:
-        return setattr(ResolveInstance._resolve, name)
-    
-    @property
-    def context(self):
-        """
-        Permit data to be stored within this Resolve instance
-        """
-        return self._context
+        return setattr(ResolveInstance.resolve, name)
 
 
 resolve_obj: PyRemoteResolve = ResolveInstance()
