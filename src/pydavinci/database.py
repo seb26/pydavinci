@@ -1,22 +1,28 @@
 # type: ignore
 from collections import UserDict
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator
+from xml.parsers.expat import ExpatError
 import logging
 import os
 import re
 import sys
+import uuid
 
+from psycopg2.extras import RealDictCursor
+import psycopg2 as pg
 import xmltodict
 
 from pydavinci.exceptions import *
-from pydavinci.main import resolve_obj, pydavinci_context
-from pydavinci.wrappers.project import Project
+from pydavinci.main import pydavinci_context
+from pydavinci.utils import is_valid_uuid
 
 if TYPE_CHECKING:
     from pydavinci.wrappers._resolve_stubs import PyRemoteProjectManager
 
 logger = logging.getLogger(__name__)
+
 
 class PydavinciDiskPathsMap(UserDict):
     def add(self, name: str, disk_path: str | Path) -> None:
@@ -39,11 +45,12 @@ class PydavinciDiskPathsMap(UserDict):
     def remove(self, name: str) -> None:
         return self.data.__delitem__(name)
 
+
 class DavinciDatabase(object):
     name: str = None
     type: str = None
     _disk_path: Path | None = None
-    disk_path_projects: Path | None = None
+    _disk_path_projects: Path | None = None
 
     def __init__(
         self,
@@ -85,6 +92,7 @@ class DavinciDatabase(object):
             **kwargs,
         )
     
+    
 class DavinciLocalDiskDatabase(DavinciDatabase):
     type_api = 'Disk'
 
@@ -110,7 +118,7 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
                     if job_data.get('SyRecordInfo').get('@DbId'):
                         return job_data.get('SyRecordInfo')
             logger.warning(f"Invalid render job data structure from this XML file: {xml_filepath}")
-        except Exception as e:
+        except ExpatError as e:
             logger.error(f"{type(e)} - Exception while parsing XML render job data from disk database, at filepath {xml_filepath}")
             logger.debug(e, exc_info=1)
         return xml_data
@@ -143,7 +151,7 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
 
         if self._disk_path:
             # Create a path to Projects
-            self.disk_path_projects = self.disk_path.joinpath(
+            self._disk_path_projects = self.disk_path.joinpath(
                 'Resolve Projects', 'Users', 'guest', 'Projects',
             )
             # Save it to disk paths for this context
@@ -165,9 +173,9 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
         return self._set_disk_path(path)
     
     def get_all_render_jobs(self, file_paths: bool = False) -> Generator:
-        if not self.disk_path_projects:
+        if not self._disk_path_projects:
             raise RenderJobDataNotFound('No disk path to the database has been specified')
-        for f in self.disk_path_projects.glob('**/Batch Renders/*.xml'):
+        for f in self._disk_path_projects.glob('**/Batch Renders/*.xml'):
             # Render jobs are saved with job ID UUID (36char)
             if len(f.stem) == 36:
                 if file_paths:
@@ -175,33 +183,20 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
                 else:
                     yield f.stem
 
-    def get_render_job(
-        self,
-        job_id: str,
-        project: Project | None = None,
-    ):
-        if not self.disk_path_projects:
+    def get_render_job(self, job_id: str):
+        if not self._disk_path_projects:
             raise RenderJobDataNotFound('No disk path to the database has been specified')
-        if project:
-            batch_render_xml_filepath = (
-                Path(self.disk_path_projects)
-                .joinpath(
-                    project.folder_path,
-                    'Batch Renders',
-                    job_id + '.xml',
-                )
-            )
-        else:
-            # Look it up in our current disk database
-            batch_render_xml_filepath = next(
-                ( f for f in self.get_all_render_jobs(file_paths=True) if f.stem == job_id ),
-                None,
-            )
-        if batch_render_xml_filepath is not None:
-            if batch_render_xml_filepath.is_file():
-                return self._parse_batch_render_xml(batch_render_xml_filepath)
+        # Look it up in our current disk database
+        xml_filepath = next(
+            # This will return first result only from the path glob
+            ( f for f in self.get_all_render_jobs(file_paths=True) if f.stem == job_id ),
+            None,
+        )
+        if xml_filepath is not None:
+            if xml_filepath.is_file():
+                return self._parse_batch_render_xml(xml_filepath)
             else:
-                raise RenderJobDataNotFound(extra=(self.disk_path, batch_render_xml_filepath))
+                raise RenderJobDataNotFound(extra=(self.disk_path, xml_filepath))
         else:
             raise RenderJobDataNotFound
         
@@ -214,30 +209,124 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
         
 
 class DavinciPostgreSQLDatabase(DavinciDatabase):
-    type_api = 'PostgreSQL'
+    db = postgresql_db
     ip_address: str | None = None
+    type_api = 'PostgreSQL'
+
+    # Defaults from DaVinci Resolve Project Server
+    user: str = 'postgres'
+    password: str = 'DaVinci'
+
+    def __init__(self, *args, **kwargs):
+        self.conn_params = dict(
+            dbname = self.name,
+            host = self.ip_address,
+            password = self.password,
+            user = self.user,
+        )
+
+    def __repr__(self):
+        return f'{self.name} ({self.type}) @ {self.ip_address}'
+
+    @classmethod
+    def connect(self, conn_params: dict):
+        def wrap(f):
+            @wraps(f)
+            def _connect(*args, **kwargs):
+                conn = pg.connect(**conn_params)
+                cur = conn.cursor(
+                    cursor_factory = RealDictCursor,
+                )
+                statement = f(cur, *args, **kwargs)
+                conn.close()
+                return statement
+            return _connect
+        return wrap
+    
+    def get_render_jobs(self, filters: dict = None, **kwargs):
+        """
+        Gets all render jobs from the Network database
+
+        @param id:              Return the render job with this ID
+        @param job_name:        Return only results with this job name
+        @param status:          Return only results with this status - str
+        @param timeline_id:     Return only results with this timeline ID - UUID(str)
+        @param timeline_name:   Return only results with this timeline name - str
+        @param filters:         Other DB col names to filter the returned result - { db_col_name: filter_value }. Col names must be from table `SyRecordInfo`.
+        """
+        filter_table = {}
+        # Process these easy filters
+        easy_filter_keynames = [
+            # KWARG : DB COL NAME
+            ( 'id', 'SyRecordInfo_id' ),
+            ( 'job_name', 'RecordInfoName' ),
+            ( 'status', 'Status' ),
+            ( 'timeline_id', 'Timeline' ),
+            ( 'timeline_name', 'SessionName' ),
+        ]
+        for easy_name, db_col in easy_filter_keynames:
+            if kwargs.get(easy_name):
+                filter_table[db_col] = kwargs.get(easy_name)
+        # Process any filters specified in `filters=` kwarg
+        # These will override any of the easy kwargs
+        if filters:
+            filter_table.update(
+                **filters,
+            )
+        # Validate
+        if not is_valid_uuid(
+            filter_table.get('SyRecordInfo_id')
+        ):
+            raise PydavinciException('render job ID must be valid UUID string (36 characters)')
+        @self.connect(self.conn_params)
+        def query(cur):
+            # Turn filters (k:v) into multiple WHERE clauses
+            clauses = [
+                pg.sql.SQL('{} = {}').format(
+                    sql.Identifier(k),
+                    sql.Literal(v),
+                ) for k, v in filter_table.items()
+            ]
+            q = pg.sql.SQL("SELECT * FROM {table} WHERE ({clauses})").format(
+                table = pg.sql.Identifier('SyRecordInfo'),
+                clauses = pg.sql.SQL(' AND ').join(clauses),
+            )
+            try:
+                cur.execute(q)
+                return cur.fetchall()
+            except pg.Error as e:
+                logger.error(e, exc_info=1)
+        return query()
+
+    def get_render_job(self, job_id: str):
+        """
+        Given render job UUID string, return render job data directly from Network database
+
+        @param job_id:  Render job UUID string
+        """
+        return self.get_render_jobs(id=job_id)
 
     @property
     def info(self):
+        """
+        Return info in the dict format recognised by the Resolve API
+        """
         return dict(
             DbName = self.name,
             DbType = self.type_api,
             IpAddress = self.ip_address,
         )
     
-    def __repr__(self):
-        return f'{self.name} ({self.type}) @ {self.ip_address}'
-
 
 class DavinciNetworkDatabase(DavinciPostgreSQLDatabase):
+
     def __init__(self, *args, **kwargs):
+        super(DavinciPostgreSQLDatabase, self).__init__(*args, **kwargs)
         super(DavinciNetworkDatabase, self).__init__(*args, **kwargs)
-    
-    def get_all_render_jobs(self):
-        raise NotImplementedError
+
 
 class DavinciCloudDatabase(DavinciPostgreSQLDatabase):
     def __init__(self, *args, **kwargs):
-        super(DavinciCloudDatabase, self).__init__(*args, **kwargs)
+        super(DavinciPostgreSQLDatabase, self).__init__(*args, **kwargs)
 
 
