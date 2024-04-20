@@ -226,7 +226,10 @@ class ProjectManager(object):
     @property
     def db(self) -> DavinciDatabase:
         db_from_api = self._obj.GetCurrentDatabase()
-        return DavinciDatabase.make(**db_from_api)
+        if db_from_api is None:
+            return None
+        else:
+            return DavinciDatabase.make(**db_from_api)
 
     @db.setter
     def db(self, db: Dict[str, str] | DavinciDatabase) -> bool:
@@ -268,7 +271,7 @@ class ProjectManager(object):
     @property
     def db_list(self) -> List[Dict[str, str]]:
         """
-        Returns list of all databases
+        Returns list of all databases, with each database as a dict of info (DbName, DbType, IpAddress)
 
         Returns:
             list of databases
@@ -278,7 +281,7 @@ class ProjectManager(object):
     @property
     def databases(self) -> List[DavinciDatabase]:
         """
-        Returns list of database objects using pydavinci classing, e.g. DavinciLocalDatabase
+        Returns list of Pydavinci database objects, e.g. DavinciLocalDatabase
         """
         def _create_database_objects():
             for db_api_result in self._obj.GetDatabaseList():
