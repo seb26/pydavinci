@@ -1,9 +1,8 @@
 from typing import Any, List
+import ast
 import uuid
 
-import pydavinci.main
-
-# import psutil
+import pydavinci
 
 def is_valid_uuid(val):
     try:
@@ -11,6 +10,14 @@ def is_valid_uuid(val):
         return True
     except ValueError:
         return False
+
+def auto_cast_str(val):
+    # Try fails if cannot eval, therefore is string
+    try:
+        val = ast.literal_eval(val)
+    except:
+        pass
+    return val
 
 
 def get_resolveobjs(objs: List[Any]) -> List[Any]:
@@ -29,8 +36,13 @@ default_resolve_install = {
 
 
 def is_resolve_obj(obj: Any) -> bool:
-    return isinstance(obj, pydavinci.main.resolve_obj)
+    if type(obj) == type(pydavinci.main.resolve_obj):  # noqa: E721
+        return True
+    else:
+        return False
 
+
+# import psutil
 
 # def get_proc_pid(name: str) -> Union[None, int]:
 #     for proc in psutil.process_iter():
