@@ -3,6 +3,7 @@ import ast
 import uuid
 
 import pydavinci
+from pydavinci.main import is_resolve_obj as main_is_resolve_obj
 
 def is_valid_uuid(val):
     try:
@@ -20,8 +21,6 @@ def auto_cast_str(val):
     return val
 
 
-def get_resolveobjs(objs: List[Any]) -> List[Any]:
-    return [x._obj for x in objs]
 
 
 TRACK_TYPES = ["video", "audio", "subtitle"]
@@ -33,14 +32,11 @@ default_resolve_install = {
     "mac": "/Applications/DaVinci Resolve/DaVinci Resolve.app/Contents/MacOS/Resolve",
     "linux": "",
 }
+def get_resolveobjs(objs: List[Any]) -> List[Any]:
+    return [x._obj for x in objs]
 
-
-def is_resolve_obj(obj: Any) -> bool:
-    if type(obj) == type(pydavinci.main.resolve_obj):  # noqa: E721
-        return True
-    else:
-        return False
-
+def is_resolve_obj(*args, **kwargs):
+    return main_is_resolve_obj(*args, **kwargs)
 
 # import psutil
 

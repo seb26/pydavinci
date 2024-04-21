@@ -2,7 +2,7 @@
 from collections import UserDict
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING, List, Generator
 from xml.parsers.expat import ExpatError
 import logging
 import os
@@ -91,6 +91,27 @@ class DavinciDatabase(object):
             **kwargs,
         )
     
+    def get_render_job(self, id: str = None) -> DavinciRenderJob:
+        """
+        Given render job UUID string, return render job data directly from Database
+
+        @param job_id:  Render job UUID string
+        """
+        return self._get_render_job(id)
+    
+    def get_render_jobs(self, **kwargs) -> DavinciRenderJob | List[DavinciRenderJob]:
+        """
+        Gets all render jobs from the Database
+
+        @param id:              Return the render job with this ID
+        @param job_name:        Return only results with this job name
+        @param status:          Return only results with this status - str
+        @param timeline_id:     Return only results with this timeline ID - UUID(str)
+        @param timeline_name:   Return only results with this timeline name - str
+        @param filters:         Other DB col names to filter the returned result - { db_col_name: filter_value }. Col names must be from table `SyRecordInfo`.
+        """
+        return self._get_render_jobs(**kwargs)
+    
     
 class DavinciLocalDiskDatabase(DavinciDatabase):
     type_api = 'Disk'
@@ -153,7 +174,8 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
         else:
             # Look for a db in the Resolve default location, per platform
             if self.name == 'Local Database':
-                if sys.platform.startswith("win32"):
+                if sys.platform.startswith('win32'):
+                    # TODO: Need to support windows!
                     pass
                 else:
                     # Compose path to the local disk database location
@@ -190,37 +212,37 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
     def disk_path(self, path: str) -> bool:
         return self._set_disk_path(path)
     
-    def _search_render_jobs(
-        self,
-        id: str = None,
-    ) -> Generator | Path: 
+    def _search_render_jobs(self, id: str = None) -> Generator: 
         if not self._disk_path_projects:
             raise RenderJobDataNotFound('No disk path to the database has been specified')
-        for item in self._disk_path_projects.glob('**/Batch Renders/*.xml'):
-            # If we find the user's specified job ID
-            if item.stem == id:
+        if id:
+            for item in self._disk_path_projects.glob(f'**/Batch Renders/{id}.xml'):
                 yield item
                 return
-            else:
-                # Render jobs are saved with job ID UUID (36char)
-                if is_valid_uuid(item.stem):
-                    yield item
+        for item in self._disk_path_projects.glob('**/Batch Renders/*.xml'):
+            # Render jobs are saved with job ID UUID (36char)
+            if is_valid_uuid(item.stem):
+                yield item
 
-    def get_render_jobs(
+    def _get_render_jobs(
         self,
         id: str = None,
         **kwargs,
-    ) -> list:
+    ) -> DavinciRenderJob | List[DavinciRenderJob]:
         if id:
             if not is_valid_uuid(id):
                 raise PydavinciException('Render job ID was not a valid UUID')
-        def _gather():
-            for filepath in self._search_render_jobs():
+        def _gather() -> DavinciRenderJob:
+            for filepath in self._search_render_jobs(id):
                 yield self._parse_render_job_xml(filepath)
-        return list( _gather() )
+        if id:
+            # single object for a single ID
+            return next( _gather() )
+        else:
+            return list( _gather() )
 
-    def get_render_job(self, id: str) -> dict:
-        return self.get_render_jobs(id=id)
+    def _get_render_job(self, id: str) -> DavinciRenderJob:
+        return self._get_render_jobs(id=id)
         
     @property
     def info(self):
@@ -247,10 +269,15 @@ class DavinciPostgreSQLDatabase(DavinciDatabase):
             @wraps(f)
             def _connect(*args, **kwargs):
                 conn = connect(**conn_params)
+                # Read only
+                conn.set_session(readonly=True, autocommit=True)
+                # By default results are instantiated as a dict
                 cur = conn.cursor(
                     cursor_factory = RealDictCursor,
                 )
+                # Run
                 statement = f(cur, *args, **kwargs)
+                # Disconnect
                 conn.close()
                 return statement
             return _connect
@@ -265,17 +292,7 @@ class DavinciPostgreSQLDatabase(DavinciDatabase):
             user = self.user,
         )
     
-    def get_render_jobs(self, filters: dict = None, **kwargs):
-        """
-        Gets all render jobs from the Network database
-
-        @param id:              Return the render job with this ID
-        @param job_name:        Return only results with this job name
-        @param status:          Return only results with this status - str
-        @param timeline_id:     Return only results with this timeline ID - UUID(str)
-        @param timeline_name:   Return only results with this timeline name - str
-        @param filters:         Other DB col names to filter the returned result - { db_col_name: filter_value }. Col names must be from table `SyRecordInfo`.
-        """
+    def _get_render_jobs(self, filters: dict = None, **kwargs) -> DavinciRenderJob | List[DavinciRenderJob]:
         @self.connect(self.conn_params)
         def query(cur):
             # Turn filters (k:v) into multiple WHERE clauses
@@ -333,16 +350,15 @@ class DavinciPostgreSQLDatabase(DavinciDatabase):
             ):
                 raise PydavinciException('render job ID must be valid UUID string (36 characters)')
         result = query()
-        return list( make_render_job_instances(result) )
+        if kwargs.get('id'):
+            # Only one ID so work with the first result only
+            return next( make_render_job_instances(result) )
+        else:
+            return list( make_render_job_instances(result) )
         
 
-    def get_render_job(self, job_id: str):
-        """
-        Given render job UUID string, return render job data directly from Network database
-
-        @param job_id:  Render job UUID string
-        """
-        return self.get_render_jobs(id=job_id)
+    def _get_render_job(self, job_id: str) -> DavinciRenderJob:
+        return self._get_render_jobs(id=job_id)
 
     @property
     def info(self):

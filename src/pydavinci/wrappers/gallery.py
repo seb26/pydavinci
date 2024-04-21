@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, List
 
 
-from pydavinci.utils import is_resolve_obj
+from pydavinci.main import is_resolve_obj
 
 from pydavinci.wrappers.gallerystillalbum import GalleryStillAlbum
 

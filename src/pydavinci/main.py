@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, List
 
 from pydavinci.connect import get_resolve
 
@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 class ResolveInstanceContext(object):
     pass
 
-class ResolveInstance:
+class ResolveInstance(object):
     def __add__(self, other: PyRemoteResolve) -> PyRemoteResolve:
         """
         Assign PyRemoteResolve type.
@@ -25,6 +25,17 @@ class ResolveInstance:
     
     def __setattr__(self, name) -> Any:
         return setattr(ResolveInstance.resolve, name)
+
+
+def get_resolveobjs(objs: List[Any]) -> List[Any]:
+    return [x._obj for x in objs]
+
+
+def is_resolve_obj(obj: Any) -> bool:
+    if type(obj) == type(ResolveInstance.resolve):  # noqa: E721
+        return True
+    else:
+        return False
 
 
 resolve_obj: PyRemoteResolve = ResolveInstance()
