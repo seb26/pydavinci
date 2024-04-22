@@ -224,15 +224,15 @@ class ProjectManager(object):
         return self._obj.RestoreProject(path)
 
     @property
-    def db(self) -> DavinciDatabase:
+    def database(self) -> DavinciDatabase:
         db_from_api = self._obj.GetCurrentDatabase()
         if db_from_api is None:
             return None
         else:
             return DavinciDatabase.make(**db_from_api)
 
-    @db.setter
-    def db(self, db: Dict[str, str] | DavinciDatabase) -> bool:
+    @database.setter
+    def database(self, db: Dict[str, str] | DavinciDatabase) -> bool:
         """
         Sets current database according to ``db_info``
 
@@ -269,16 +269,6 @@ class ProjectManager(object):
         return self._obj.SetCurrentDatabase(db_info)
     
     @property
-    def db_list(self) -> List[Dict[str, str]]:
-        """
-        Returns list of all databases, with each database as a dict of info (DbName, DbType, IpAddress)
-
-        Returns:
-            list of databases
-        """
-        return self._obj.GetDatabaseList()
-    
-    @property
     def databases(self) -> List[DavinciDatabase]:
         """
         Returns list of Pydavinci database objects, e.g. DavinciLocalDatabase
@@ -291,3 +281,14 @@ class ProjectManager(object):
         return list(
             _create_database_objects()
         )
+    
+    @property
+    def db_list(self) -> List[Dict[str, str]]:
+        """
+        ** Deprecated
+        Returns list of all databases, with each database as a dict of info (DbName, DbType, IpAddress)
+
+        Returns:
+            list of databases
+        """
+        return self._obj.GetDatabaseList()

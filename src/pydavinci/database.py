@@ -2,7 +2,7 @@
 from collections import UserDict
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Generator
+from typing import TYPE_CHECKING, List, Generator, Iterable
 from xml.parsers.expat import ExpatError
 import logging
 import os
@@ -17,7 +17,7 @@ import xmltodict
 
 from pydavinci.exceptions import *
 from pydavinci.main import pydavinci_context
-from pydavinci.wrappers.renderjob import DavinciRenderJob
+from pydavinci.wrappers.renderjob import RenderJob
 from pydavinci.utils import is_valid_uuid, auto_cast_str
 
 logger = logging.getLogger(__name__)
@@ -90,16 +90,24 @@ class DavinciDatabase(object):
             ip_address = IpAddress,
             **kwargs,
         )
+
+    def _make_render_job_instances(self, results: Iterable) -> Generator:
+        for row in results:
+            render_job = RenderJob(
+                database = self,
+                source = row,
+            )
+            yield render_job
     
-    def get_render_job(self, id: str = None) -> DavinciRenderJob:
+    def get_render_job(self, id: str = None, **kwargs) -> RenderJob:
         """
         Given render job UUID string, return render job data directly from Database
 
         @param job_id:  Render job UUID string
         """
-        return self._get_render_job(id)
+        return self._get_render_job(id, **kwargs)
     
-    def get_render_jobs(self, **kwargs) -> DavinciRenderJob | List[DavinciRenderJob]:
+    def get_render_jobs(self, **kwargs) -> RenderJob | List[RenderJob]:
         """
         Gets all render jobs from the Database
 
@@ -130,12 +138,13 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
         else:
             return f'{self.name} ({self.type})'
 
-    def _parse_render_job_xml(self, xml_filepath: Path) -> DavinciRenderJob:
+    def _parse_render_job_xml(self, xml_filepath: Path, **kwargs) -> dict:
         def _type_cast(path, key, value):
             # Account for lower case bools
             if value == "true": value = "True"
             if value == "false": value = "False"
             return key, auto_cast_str(value)
+        
         if xml_filepath is not None:
             if xml_filepath.is_file():
                 try:
@@ -146,17 +155,12 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
                         )
                         if job_data.get('SyRecordInfo'):
                             if job_data.get('SyRecordInfo').get('@DbId'):
-                                render_job = DavinciRenderJob(
-                                    database = self,
-                                    source = job_data.get('SyRecordInfo'),
-                                )
-                                return render_job
+                                return job_data.get('SyRecordInfo')
                         else:
                             logger.warning(f"Invalid render job data structure from this XML file: {xml_filepath}")
                 except ExpatError as e:
                     logger.error(f"{type(e)} - Exception while parsing XML render job data from disk database, at filepath {xml_filepath}")
                     logger.debug(e, exc_info=1)
-                return xml_data
             else:
                 raise RenderJobDataNotFound(extra=(self._disk_path, xml_filepath))
         else:
@@ -228,21 +232,25 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
         self,
         id: str = None,
         **kwargs,
-    ) -> DavinciRenderJob | List[DavinciRenderJob]:
+    ) -> RenderJob | List[RenderJob]:
         if id:
             if not is_valid_uuid(id):
                 raise PydavinciException('Render job ID was not a valid UUID')
-        def _gather() -> DavinciRenderJob:
+        def gather() -> RenderJob:
             for filepath in self._search_render_jobs(id):
                 yield self._parse_render_job_xml(filepath)
+        results = gather()
+        if kwargs.get('_data_only') is True:
+            # Used to populate an existing RenderJob()
+            return results
         if id:
             # single object for a single ID
-            return next( _gather() )
+            return next( self._make_render_job_instances(results) )
         else:
-            return list( _gather() )
+            return list( self._make_render_job_instances(results) )
 
-    def _get_render_job(self, id: str) -> DavinciRenderJob:
-        return self._get_render_jobs(id=id)
+    def _get_render_job(self, id: str, **kwargs) -> RenderJob:
+        return self._get_render_jobs(id=id, **kwargs)
         
     @property
     def info(self):
@@ -292,7 +300,7 @@ class DavinciPostgreSQLDatabase(DavinciDatabase):
             user = self.user,
         )
     
-    def _get_render_jobs(self, filters: dict = None, **kwargs) -> DavinciRenderJob | List[DavinciRenderJob]:
+    def _get_render_jobs(self, filters: dict = None, **kwargs) -> RenderJob | List[RenderJob]:
         @self.connect(self.conn_params)
         def query(cur):
             # Turn filters (k:v) into multiple WHERE clauses
@@ -316,13 +324,6 @@ class DavinciPostgreSQLDatabase(DavinciDatabase):
                 return cur.fetchall()
             except Psycopg2Error as e:
                 logger.error(e, exc_info=1)
-        def make_render_job_instances(result):
-            for row in result:
-                render_job = DavinciRenderJob(
-                    database = self,
-                    source = row,
-                )
-                yield render_job
 
         filter_table = {}
         # Process these easy filters
@@ -349,16 +350,19 @@ class DavinciPostgreSQLDatabase(DavinciDatabase):
                 filter_table.get('SyRecordInfo_id')
             ):
                 raise PydavinciException('render job ID must be valid UUID string (36 characters)')
-        result = query()
+        results = query()
+        if kwargs.get('_data_only') is True:
+            # Used to populate an existing RenderJob()
+            return results
         if kwargs.get('id'):
             # Only one ID so work with the first result only
-            return next( make_render_job_instances(result) )
+            return next( self._make_render_job_instances(results) )
         else:
-            return list( make_render_job_instances(result) )
+            return list( self._make_render_job_instances(results) )
         
 
-    def _get_render_job(self, job_id: str) -> DavinciRenderJob:
-        return self._get_render_jobs(id=job_id)
+    def _get_render_job(self, id: str, **kwargs) -> RenderJob:
+        return self._get_render_jobs(id=id, **kwargs)
 
     @property
     def info(self):
