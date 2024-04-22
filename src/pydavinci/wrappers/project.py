@@ -1,8 +1,9 @@
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from pydavinci.exceptions import ObjectNotFound
+from pydavinci.exceptions import ObjectNotFound, RenderJobDataNotFound
 from pydavinci.main import resolve_obj
-from pydavinci.utils import is_resolve_obj
+from pydavinci.utils import is_resolve_obj, is_valid_uuid
+from pydavinci.wrappers.renderjob import RenderJob
 from pydavinci.wrappers.settings.constructor import get_prj_settings
 
 from pydavinci.wrappers.gallery import Gallery
@@ -10,6 +11,7 @@ from pydavinci.wrappers.gallery import Gallery
 if TYPE_CHECKING:
     from pydavinci.wrappers._resolve_stubs import PyRemoteProject
     from pydavinci.wrappers.mediapool import MediaPool
+    from pydavinci.wrappers.renderjob import RenderJob
     from pydavinci.wrappers.settings.constructor import ProjectSettings
     from pydavinci.wrappers.timeline import Timeline
 
@@ -119,28 +121,32 @@ class Project:
         """
         return self._obj.SetPreset(preset_name)
 
-    def add_renderjob(self, block: bool = True) -> str:
+    def add_renderjob(self, block: bool = True) -> RenderJob:
         """
-        Adds current render settings to a render job.
+        Create a new render job using the current render settings.
 
-        If there are already rendered jobs in the render queue and you're executing a lot of commands, there's a bug on
-        the Davinci API that there's a chance it will return an empty string instead of the job ID.
+        There is a bug in the API where it will return an empty string and not create a render job.
+        Noticeable if there are already rendered jobs in the render queue and you're executing a lot of commands.
+        To avoid this, add_renderjob() will retry itself until it gets a valid job ID. To disable this behaviour,
+        set `block`=False.
 
-        ``block`` blocks the program until we get a job id back from Davinci Resolve. It's ``True`` by default.
+        @param block: block and retry until render job added successfully. True by default.
 
         Returns:
-            str: render job id
+            RenderJob
         """
-        job_id = self._obj.AddRenderJob()
-
-        if block and job_id == "":
-            while job_id == "":
-
-                job_id = self._obj.AddRenderJob()
-
+        def _add(block: bool = True) -> str:
+            job_id = self._obj.AddRenderJob()
+            if block and job_id == "":
+                while job_id == "":
+                    job_id = self._obj.AddRenderJob()
+                return job_id
             return job_id
+        
+        job_id: str = _add(block=block)
+        if job_id:
+            return resolve_obj.GetProjectManager().database.get_render_job(job_id)
 
-        return job_id
 
     def delete_renderjob(self, job_id: str) -> bool:
         """
@@ -164,14 +170,22 @@ class Project:
         return self._obj.DeleteAllRenderJobs()
 
     @property
-    def render_jobs(self) -> List[str]:
+    def render_jobs(self) -> List[RenderJob]:
         """
         Gets current list of render jobs
 
         Returns:
-            list: render job list
+            list: RenderJob items
         """
-        return self._obj.GetRenderJobList()
+        jobs = self._obj.GetRenderJobList()
+        if jobs:
+            def test(jobs):
+                for job in jobs:
+                    if is_valid_uuid( job.get('JobId') ):
+                        yield RenderJob(job)
+            return list( test(jobs) )
+        else:
+            return []
 
     @property
     def render_presets(self) -> List[str]:
@@ -210,12 +224,12 @@ class Project:
         """
         return self._obj.StopRendering()
 
-    def render_status(self, job_id: str) -> Dict[Any, Union[str, int]]:
+    def render_status(self, job: str | RenderJob) -> Dict[Any, Union[str, int]]:
         """
         Gets render status on ``job_id``
 
         Args:
-            job_id (str): job id
+            job (str, RenderJob): job ID string, or RenderJob instance
 
         Returns:
             dict: dictionary with render status
@@ -223,18 +237,43 @@ class Project:
         Render Status:
             The dictionary returned looks like this when rendering:
             ```python
-            {'JobStatus': 'Rendering',
-            'CompletionPercentage': 92,
-            'EstimatedTimeRemainingInMs': 1000}
+            {
+                'CompletionPercentage': 92,
+                'EstimatedTimeRemainingInMs': 1000,
+                'JobStatus': 'Rendering',
+                'TimeTakenToRenderInMs': 0,
+            }
             ```
             And like this when the render on the provided job id is complete:
             ```python
-            {'JobStatus': 'Complete',
-            'CompletionPercentage': 100,
-            'TimeTakenToRenderInMs': 25991}
+            {
+                'CompletionPercentage': 100,
+                'EstimatedTimeRemainingInMs': 0,
+                'JobStatus': 'Complete',
+                'TimeTakenToRenderInMs': 25991,
+            }
             ```
         """
-        return self._obj.GetRenderJobStatus(job_id)
+        # Maintain consistent set of keyvalues
+        status = dict(
+            CompletionPercentage = 0,
+            EstimatedTimeRemainingInMs = 0,
+            JobStatus = '',
+            TimeTakenToRenderInMs = 0,
+
+        )
+        if isinstance(job, str):
+            id = job
+        elif isinstance(job, RenderJob):
+            id = job.id
+        result = self._obj.GetRenderJobStatus(id)
+        if result:
+            if isinstance(result, dict):
+                status.update(**result)
+                return status
+        raise RenderJobDataNotFound(f'No render status for this job ID: {id}')
+
+            
 
     @property
     def render_formats(self) -> Dict[Any, Any]:
