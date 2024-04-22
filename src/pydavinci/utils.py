@@ -5,7 +5,13 @@ import uuid
 import pydavinci
 from pydavinci.main import is_resolve_obj as main_is_resolve_obj
 
-def is_valid_uuid(val):
+def is_valid_uuid(val: Any) -> bool:
+    """
+    Test if a value is a UUID v4 (36 chars)
+    Value must also be truesy
+    """
+    if not val:
+        return False
     try:
         uuid.UUID(str(val))
         return True
