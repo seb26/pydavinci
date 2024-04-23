@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from pydavinci.exceptions import ObjectNotFound, RenderJobDataNotFound
+from pydavinci.exceptions import ObjectNotFound, RenderJobNotFound
 from pydavinci.main import resolve_obj
 from pydavinci.utils import is_resolve_obj, is_valid_uuid
 from pydavinci.wrappers.renderjob import RenderJob
@@ -271,7 +271,7 @@ class Project:
             if isinstance(result, dict):
                 status.update(**result)
                 return status
-        raise RenderJobDataNotFound(f'No render status for this job ID: {id}')
+        raise RenderJobNotFound(f'No render status for this job ID: {id}')
 
             
 

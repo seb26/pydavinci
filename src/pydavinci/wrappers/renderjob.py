@@ -21,7 +21,7 @@ class RenderJobStatus(Enum):
     COMPLETE = 3
     CANCELLED = 4
 
-class RenderJob(UserDict):
+class RenderJob(object):
     # Documentation:
     # https://docs.google.com/spreadsheets/d/1t2nrn5k0SBg8N1HYsXq-wPHxZOj1djVvJS7KnJuY6GQ/edit#gid=164036605
     __keys_api_GetRenderJobList__ = (
@@ -193,9 +193,27 @@ class RenderJob(UserDict):
         # Parse binary fields in FieldsBlob
         # TODO
 
+    def __getitem__(self, attr):
+        """Make subscriptable like a dict result, for backwards compatibility"""
+        return getattr(self, attr)
+
     def __getattr__(self, attr):
+        """
+        Recognise if tried to access an API/DB param on this RenderJob but there was none available,
+        but softly return None and log a warning to stderr.
+
+        Often because:
+        * previous attempts to get data from API failed (i.e. job not in this project)
+        * previous attempts to get data from DB failed (i.e. no DB path available or could not connect to network db)
+
+        TODO:
+        - Add a strict global somewhere to permit these moments to raise AttributeError or another exception
+        """
         if attr in RenderJob.__keys__api__:
             logger.warning(f"RenderJob ({self.id}): Tried to get API key value '{attr}' but no API data was accessible for this job")
+            return None
+        elif attr in RenderJob.__keys__db__:
+            logger.warning(f"RenderJob ({self.id}): Tried to get DB key value '{attr}' but no DB data was accessible for this job")
             return None
         else:
             raise AttributeError("%r object has no attribute %r" % (self.__class__.__name__, attr))

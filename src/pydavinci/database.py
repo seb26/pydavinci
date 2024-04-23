@@ -91,15 +91,13 @@ class DavinciDatabase(object):
             **kwargs,
         )
 
-    def _make_render_job_instances(self, results: Iterable) -> Generator:
-        for row in results:
-            render_job = RenderJob(
-                database = self,
-                source = row,
-            )
-            yield render_job
+    def _make_render_job_instances(self, results: Iterable) -> List[RenderJob] | RenderJob:
+        if len(results) == 1:
+            return RenderJob(database=self, source=results[0])
+        else:
+            return list( RenderJob(database=self, source=row) for row in results )
     
-    def get_render_job(self, id: str = None, **kwargs) -> RenderJob:
+    def get_render_job(self, id: str = None, **kwargs) -> RenderJob | None:
         """
         Given render job UUID string, return render job data directly from Database
 
@@ -134,7 +132,7 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
 
     def __repr__(self):
         if self.disk_path:
-            return f'{self.name} ({self.type}) @ {self.disk_path}'
+            return f'{self.name} ({self.type}: {self.disk_path})'
         else:
             return f'{self.name} ({self.type})'
 
@@ -166,6 +164,21 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
         else:
             raise RenderJobDataNotFound
     
+    def _search_render_jobs(self, id: str = None) -> List[Path]: 
+        if not self._disk_path_projects:
+            raise RenderJobDataNotFound('No disk path to the database has been specified')
+        if id:
+            glob = self._disk_path_projects.glob(f'**/Batch Renders/{id}.xml')
+            # Get the first result only - render jobs IDs are unique
+            try:
+                first = next(glob)
+            except StopIteration:
+                first = None
+            return [ first ] if first else None
+        else:
+            glob = self._disk_path_projects.glob('**/Batch Renders/*.xml')
+            return list( item for item in glob if is_valid_uuid(item.stem) )
+
     def _set_disk_path(self, path: str | Path | None = None) -> bool:
         # Set according to user specified path
         if path:
@@ -208,26 +221,6 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
             logger.error(f'{self.name}: No path to this disk database was identified. Calls to interact with the database will fail. You must specify the path manually by setting `resolve.project_manager.db.disk_path` to a string path or Path().')
             return False
         
-    @property
-    def disk_path(self):
-        return self._disk_path
-    
-    @disk_path.setter
-    def disk_path(self, path: str) -> bool:
-        return self._set_disk_path(path)
-    
-    def _search_render_jobs(self, id: str = None) -> Generator: 
-        if not self._disk_path_projects:
-            raise RenderJobDataNotFound('No disk path to the database has been specified')
-        if id:
-            for item in self._disk_path_projects.glob(f'**/Batch Renders/{id}.xml'):
-                yield item
-                return
-        for item in self._disk_path_projects.glob('**/Batch Renders/*.xml'):
-            # Render jobs are saved with job ID UUID (36char)
-            if is_valid_uuid(item.stem):
-                yield item
-
     def _get_render_jobs(
         self,
         id: str = None,
@@ -236,21 +229,30 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
         if id:
             if not is_valid_uuid(id):
                 raise PydavinciException('Render job ID was not a valid UUID')
-        def gather() -> RenderJob:
-            for filepath in self._search_render_jobs(id):
-                yield self._parse_render_job_xml(filepath)
-        results = gather()
-        if kwargs.get('_data_only') is True:
-            # Used to populate an existing RenderJob()
-            return results
-        if id:
-            # single object for a single ID
-            return next( self._make_render_job_instances(results) )
+        filepaths = self._search_render_jobs(id)
+        if filepaths:
+            results = list(
+                self._parse_render_job_xml(filepath) for filepath in filepaths
+            )
         else:
-            return list( self._make_render_job_instances(results) )
+            raise RenderJobNotFound(f'{id} not found in database: {self.__repr__()}')
+        if kwargs.get('_data_only') is True:
+            # Return it plainly, so that it can be used to populate an existing RenderJob()
+            return results
+        else:
+            # Otherwise return RenderJob() instances
+            return self._make_render_job_instances(results)
 
     def _get_render_job(self, id: str, **kwargs) -> RenderJob:
         return self._get_render_jobs(id=id, **kwargs)
+        
+    @property
+    def disk_path(self):
+        return self._disk_path
+    
+    @disk_path.setter
+    def disk_path(self, path: str) -> bool:
+        return self._set_disk_path(path)
         
     @property
     def info(self):
@@ -258,21 +260,58 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
             DbName = self.name,
             DbType = self.type_api,
         )
-        
+
 
 class DavinciPostgreSQLDatabase(DavinciDatabase):
     ip_address: str | None = None
     type_api = 'PostgreSQL'
 
-    # Defaults from DaVinci Resolve Project Server
+    # Defaults are derived from DaVinci Resolve Project Server
     user: str = 'postgres'
     password: str = 'DaVinci'
 
+    # Process these easy filter names for use in get_render_jobs(filters=)
+    _easy_filter_keynames = [
+        # KWARG : DB COL NAME
+        ( 'id', 'SyRecordInfo_id' ),
+        ( 'job_name', 'RecordInfoName' ),
+        ( 'status', 'Status' ),
+        ( 'timeline_id', 'Timeline' ),
+        ( 'timeline_name', 'SessionName' ),
+    ]
+
     def __repr__(self):
-        return f'{self.name} ({self.type}) @ {self.ip_address}'
+        return f'{self.name} ({self.type} @ {self.ip_address})'
 
     @classmethod
     def connect(self, conn_params: dict):
+        """
+        Decorator for postgreSQL connections.
+
+        Operations:
+        It will connect to postgreSQL database with the params you specify in `conn_params` (dict):
+            - dbname
+            - host
+            - user
+            - password
+            - (as specified by psycopg2.connect())
+        Then start a DB session as ReadOnly.
+        Then create a cursor object for you to define - as first arg 'cur' in your function.
+        By default the cursor has a Dict transformer attached, so the results are returned as a dict with type casting.
+        Then executes your function.
+        Then closes the DB connection.
+
+        Usage:
+            ```python
+            conn_params = {} # where keys are dbname, host, user, password
+            @DavinciPostgreSQLDatabase.connect(conn_params)
+            def my_query(cur):
+                query = sql.SQL("SELECT * etc")
+                cur.execute(query)
+                return cur.fetchone()
+            result = my_query()
+            ```
+        """
         def wrap(f):
             @wraps(f)
             def _connect(*args, **kwargs):
@@ -293,6 +332,7 @@ class DavinciPostgreSQLDatabase(DavinciDatabase):
     
     @property 
     def conn_params(self):
+        """Create conn_params on demand, drawing from the current credential values"""
         return dict(
             dbname = self.name,
             host = self.ip_address,
@@ -326,16 +366,8 @@ class DavinciPostgreSQLDatabase(DavinciDatabase):
                 logger.error(e, exc_info=1)
 
         filter_table = {}
-        # Process these easy filters
-        easy_filter_keynames = [
-            # KWARG : DB COL NAME
-            ( 'id', 'SyRecordInfo_id' ),
-            ( 'job_name', 'RecordInfoName' ),
-            ( 'status', 'Status' ),
-            ( 'timeline_id', 'Timeline' ),
-            ( 'timeline_name', 'SessionName' ),
-        ]
-        for easy_name, db_col in easy_filter_keynames:
+        # Transform easy filter names -> db col names
+        for easy_name, db_col in self._easy_filter_keynames:
             if kwargs.get(easy_name):
                 filter_table[db_col] = kwargs.get(easy_name)
         # Process any filters specified in `filters=` kwarg
@@ -351,16 +383,19 @@ class DavinciPostgreSQLDatabase(DavinciDatabase):
             ):
                 raise PydavinciException('render job ID must be valid UUID string (36 characters)')
         results = query()
+        if len(results) == 0:
+            if kwargs.get('id'):
+                exception_msg = f'{kwargs.get('id')} not found in database: {self.__repr__()}'
+            else:
+                exception_msg = f'No results from the query on this database: {self.__repr__()}'
+            raise RenderJobNotFound(exception_msg)
         if kwargs.get('_data_only') is True:
-            # Used to populate an existing RenderJob()
+            # Return it plainly, so that it can be used to populate an existing RenderJob()
             return results
-        if kwargs.get('id'):
-            # Only one ID so work with the first result only
-            return next( self._make_render_job_instances(results) )
         else:
-            return list( self._make_render_job_instances(results) )
+            # Otherwise return RenderJob() instances
+            return self._make_render_job_instances(results)
         
-
     def _get_render_job(self, id: str, **kwargs) -> RenderJob:
         return self._get_render_jobs(id=id, **kwargs)
 

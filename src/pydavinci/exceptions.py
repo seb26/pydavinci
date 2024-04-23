@@ -14,7 +14,7 @@ class PydavinciException(Exception):
 class ObjectNotFound(PydavinciException):
     pass
 
-class RenderJobDataNotFound(PydavinciException):
+class RenderJobNotFound(PydavinciException):
     message = "Verify that the job ID is present in the selected database."
 
 class TimelineNotFound(PydavinciException):
