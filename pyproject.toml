@@ -18,7 +18,6 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dependencies = [
-    "loguru>=0.6.0",
     "pydantic>=1.9.0",
     "typing_extensions>=4.1.1",
 ]
