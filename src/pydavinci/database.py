@@ -238,7 +238,10 @@ class DavinciLocalDiskDatabase(DavinciDatabase):
             raise RenderJobNotFound(f'{id} not found in database: {self.__repr__()}')
         if kwargs.get('_data_only') is True:
             # Return it plainly, so that it can be used to populate an existing RenderJob()
-            return results
+            if id:
+                return results[0]
+            else:
+                return results
         else:
             # Otherwise return RenderJob() instances
             return self._make_render_job_instances(results)
@@ -391,7 +394,10 @@ class DavinciPostgreSQLDatabase(DavinciDatabase):
             raise RenderJobNotFound(exception_msg)
         if kwargs.get('_data_only') is True:
             # Return it plainly, so that it can be used to populate an existing RenderJob()
-            return results
+            if id:
+                return results[0]
+            else:
+                return results
         else:
             # Otherwise return RenderJob() instances
             return self._make_render_job_instances(results)
