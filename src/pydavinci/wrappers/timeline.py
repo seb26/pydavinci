@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+import logging
 
-import pydavinci.logger as log
 from pydavinci.exceptions import TimelineNotFound
 from pydavinci.main import resolve_obj
 from pydavinci.utils import TRACK_ERROR, TRACK_TYPES, get_resolveobjs, is_resolve_obj
@@ -8,6 +8,7 @@ from pydavinci.wrappers.marker import MarkerCollection
 from pydavinci.wrappers.settings.constructor import get_tl_settings
 from pydavinci.wrappers.timelineitem import TimelineItem
 
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pydavinci.wrappers._resolve_stubs import PyRemoteTimeline
@@ -57,7 +58,7 @@ class Timeline:
             # doing the check here again in case user uses self.set_setting("useCustomSettings")
             # need to be compatible with that too
 
-            log.error(
+            logger.error(
                 "Can't create timeline settings. Timeline not configured for custom settings. "
                 + "Use Timeline.custom_settings(True) and then call Timeline.settings again."  # noqa: W503
             )

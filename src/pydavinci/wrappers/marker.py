@@ -2,7 +2,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from typing_extensions import Literal, TypeAlias, TypedDict
 
-import pydavinci.logger as log
+import logging
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pydavinci.wrappers._resolve_stubs import (
@@ -103,12 +105,12 @@ class MarkerCollection:
 
         if frameid in self._cache:
             if not overwrite:
-                log.info(
+                logger.info(
                     f"Marker at {frameid} already exists. Skipping... If you want to overwrite, use overwrite = True"
                 )
                 return None  # type: ignore
             else:
-                log.warn(f"Marker at frame {frameid} already exists. Overwriting ...")
+                logger.warn(f"Marker at frame {frameid} already exists. Overwriting ...")
                 f = frameid
                 self.delete(frameid=f)
 
@@ -128,7 +130,7 @@ class MarkerCollection:
         else:
             # TODO: try to inform user which error happened,
             # check if frameid and duration are OK for this clip
-            log.error(
+            logger.error(
                 "Couldn't add marker. Make sure the frameid is correct and the duration isn't bigger than the clips' length."
             )
             return None  # type: ignore
