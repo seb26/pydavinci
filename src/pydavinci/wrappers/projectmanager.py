@@ -227,6 +227,7 @@ class ProjectManager(object):
     def database(self) -> DavinciDatabase:
         db_from_api = self._obj.GetCurrentDatabase()
         if db_from_api is None:
+            # API behaviour - if a Dialog window is open in the foreground of any kind, the result is None
             return None
         else:
             return DavinciDatabase.make(**db_from_api)
