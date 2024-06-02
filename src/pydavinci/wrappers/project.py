@@ -186,6 +186,26 @@ class Project:
             return list( test(jobs) )
         else:
             return []
+    
+    def get_render_jobs(self, cls: object = None) -> List[Any]:
+        """
+        Gets current list of render jobs
+
+        Arguments:
+            cls: A class you specify
+
+        Returns:
+            list: Render job instances
+        """
+        jobs = self._obj.GetRenderJobList()
+        if jobs:
+            def test(jobs):
+                for job in jobs:
+                    if is_valid_uuid( job.get('JobId') ):
+                        yield cls(job)
+            return list( test(jobs) )
+        else:
+            return []
 
     @property
     def render_presets(self) -> List[str]:
